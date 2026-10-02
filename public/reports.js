@@ -15,6 +15,12 @@ const Reports = {
   draft: null,        // 同一切片的当前草稿
   correcting: false,
 
+  // 接触簇分析状态（只读查询，阈值仅影响本次结果）
+  contactReportId: null,
+  contactResult: null,   // 最近一次分析结果
+  contactClusterId: null, // 当前选中（高亮）的簇 id
+  contactHighlight: null, // Set<cellKey>，画布高亮用
+
   async showList() {
     document.getElementById('view-reports').classList.remove('hidden');
     await this.refresh();
@@ -241,6 +247,17 @@ const Reports = {
     this.mergeSelected = [];
     this.renderReportMerge(r);
 
+    // 接触簇分析：只读查询，阈值仅影响本次结果；切换报告时重置
+    this.contactReportId = r.id;
+    this.contactResult = null;
+    this.contactClusterId = null;
+    this.contactHighlight = null;
+    document.getElementById('rp-contact-result').innerHTML =
+      '<p class="hint">输入阈值后点击「分析接触簇」。</p>';
+    document.getElementById('rp-contact-clear').classList.add('hidden');
+    document.getElementById('rp-contact-run').onclick = () => this.runContactAnalysis();
+    document.getElementById('rp-contact-clear').onclick = () => this.clearContactHighlight();
+
     document.getElementById('rp-png-link').href = API.exportPngUrl(r.id);
     document.getElementById('rp-png-link').setAttribute('download', `${r.id}_annotated.png`);
     document.getElementById('rp-csv-link').href = API.exportCsvUrl(r.id);
@@ -254,7 +271,10 @@ const Reports = {
       });
       this.detailView.readOnly = true;
     }
-    this.detailView.bindState(() => ({ cells: r.cells, fields: r.fields || [], calib: r.calib, activeCellId: null }));
+    this.detailView.bindState(() => ({
+      cells: r.cells, fields: r.fields || [], calib: r.calib,
+      activeCellId: null, highlightCellIds: this.contactHighlight
+    }));
     await this.detailView.loadImage(`/api/reports/${r.id}/file`, r.width, r.height);
     this.detailView.readOnly = true;
     this.detailView.setTool('pan');
@@ -268,6 +288,10 @@ const Reports = {
     this.trace = null;
     this.draft = null;
     this.correcting = false;
+    this.contactReportId = null;
+    this.contactResult = null;
+    this.contactClusterId = null;
+    this.contactHighlight = null;
   },
 
   esc(s) {
@@ -498,6 +522,95 @@ const Reports = {
       </table>
       <p class="hint">同一细胞在并集中只计一次。计入细胞：${counted || '（无）'}。
       结果只读取<b>发布时冻结数据</b>（发布时草稿 v${r.draftVersion}），不随后续草稿变化。</p>`;
+  },
+
+  // ---------- 接触簇分析（发布时冻结；阈值仅影响本次查询，不写回报告） ----------
+
+  async runContactAnalysis() {
+    if (!this.contactReportId) return;
+    const resEl = document.getElementById('rp-contact-result');
+    const raw = document.getElementById('rp-contact-threshold').value.trim();
+    resEl.innerHTML = '<p class="hint">计算中…</p>';
+    try {
+      // 阈值合法性由服务端最终判定（负数/非有限数 → 400），空输入按无效处理
+      const result = await API.reportContacts(this.contactReportId, raw === '' ? NaN : Number(raw));
+      if (!result || result.reportId !== this.contactReportId) return; // 期间已切换报告
+      this.contactResult = result;
+      this.contactClusterId = null;
+      this.contactHighlight = null;
+      this.renderContactResult();
+    } catch (e) {
+      this.contactResult = null;
+      this.contactClusterId = null;
+      this.contactHighlight = null;
+      resEl.innerHTML = `<p class="merge-error">${this.esc(e.message)}</p>`;
+      document.getElementById('rp-contact-clear').classList.add('hidden');
+    }
+    if (this.detailView) this.detailView.render();
+  },
+
+  renderContactResult() {
+    const resEl = document.getElementById('rp-contact-result');
+    const clearBtn = document.getElementById('rp-contact-clear');
+    const r = this.contactResult;
+    if (!r) return;
+
+    let html = `<p class="hint">阈值 <b>${r.thresholdUm}</b> μm（发布时冻结数据，1 px = ${r.scaleUmPerPx} μm）：` +
+      `细胞 ${r.cellCount} 个 · 邻接对 ${r.pairCount} 个 · 连通簇 ${r.clusterCount} 个` +
+      `（多细胞簇 ${r.multiCellClusterCount} 个）。结果不写回报告。</p>`;
+    if (r.pairCount === 0) {
+      html += `<p class="hint">阈值内没有邻接关系：${r.cellCount} 个细胞各自成独立簇。</p>`;
+    }
+
+    // 连通簇列表：点击在报告快照上高亮该簇（再点一次取消）
+    html += '<div class="cluster-list">';
+    r.clusters.forEach((c) => {
+      const names = c.cells.map((x) => this.esc(x.name)).join('、');
+      const active = this.contactClusterId === c.id ? ' active' : '';
+      html += `<div class="cluster-row${active}" data-cluster="${c.id}">` +
+        `<b>簇 ${c.id + 1}</b> · ${c.size} 个细胞<span class="cluster-names">${names}</span></div>`;
+    });
+    html += '</div>';
+
+    // 每个细胞的阈值内邻居与最短净区域间距
+    const rows = r.cells.map((c) => {
+      const nbrs = c.neighbors.length
+        ? c.neighbors.map((n) => `${this.esc(n.name)}（${this.fmt(n.distanceUm)}）`).join('、')
+        : '—';
+      return `<tr><td>${this.esc(c.name)}</td><td>${nbrs}</td>` +
+        `<td>${c.shortestUm === null ? '—' : this.fmt(c.shortestUm)}</td></tr>`;
+    }).join('');
+    html += `<table class="measure compact"><thead><tr>` +
+      `<th>细胞</th><th>阈值内邻居（净区域间距 μm）</th><th>最短净区域间距 μm</th>` +
+      `</tr></thead><tbody>${rows}</tbody></table>`;
+
+    resEl.innerHTML = html;
+    clearBtn.classList.toggle('hidden', this.contactClusterId === null);
+    resEl.querySelectorAll('.cluster-row').forEach((row) => {
+      row.onclick = () => this.selectContactCluster(Number(row.dataset.cluster));
+    });
+  },
+
+  // 选中/取消某个簇：在报告快照画布上高亮其全部细胞
+  selectContactCluster(id) {
+    if (!this.contactResult) return;
+    if (this.contactClusterId === id) {
+      this.contactClusterId = null;
+      this.contactHighlight = null;
+    } else {
+      this.contactClusterId = id;
+      const c = this.contactResult.clusters.find((x) => x.id === id);
+      this.contactHighlight = new Set(c ? c.cellKeys : []);
+    }
+    this.renderContactResult();
+    if (this.detailView) this.detailView.render();
+  },
+
+  clearContactHighlight() {
+    this.contactClusterId = null;
+    this.contactHighlight = null;
+    this.renderContactResult();
+    if (this.detailView) this.detailView.render();
   },
 
   fmt(v) {

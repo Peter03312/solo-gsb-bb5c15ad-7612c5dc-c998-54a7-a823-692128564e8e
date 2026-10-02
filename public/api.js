@@ -83,6 +83,14 @@ const API = {
       body: JSON.stringify({ fieldIds })
     }));
   },
+  // 细胞接触簇分析：报告冻结轮廓与定标 + 本次阈值（只读，不写回报告）
+  async reportContacts(reportId, thresholdUm) {
+    return jsonOrThrow(await fetch(`/api/reports/${reportId}/contacts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ thresholdUm })
+    }));
+  },
   async listReports() {
     return jsonOrThrow(await fetch('/api/reports'));
   },

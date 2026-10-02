@@ -194,6 +194,21 @@ table.measure.compact th, table.measure.compact td { padding: 4px 6px; }
   background: rgba(255,93,93,.08); border-radius: 7px; padding: 7px 10px;
 }
 
+/* 接触簇分析 */
+.contact-threshold {
+  background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+  border-radius: 7px; padding: 7px 9px; font: inherit; width: 110px;
+}
+.contact-threshold:focus { outline: none; border-color: var(--accent); }
+.cluster-list { display: flex; flex-direction: column; gap: 5px; margin: 8px 0; }
+.cluster-row {
+  border: 1px solid var(--line); border-radius: 7px;
+  padding: 5px 8px; background: var(--panel2); font-size: 12.5px; cursor: pointer;
+}
+.cluster-row:hover { border-color: var(--accent); }
+.cluster-row.active { border-color: #00e5ff; background: rgba(0,229,255,.08); }
+.cluster-names { display: block; color: var(--muted); margin-top: 2px; }
+
 /* 复选框列表项 */
 .item label.main { display: flex; align-items: center; gap: 14px; flex: 1; cursor: pointer; min-width: 0; }
 .item input[type=checkbox] { transform: scale(1.25); }

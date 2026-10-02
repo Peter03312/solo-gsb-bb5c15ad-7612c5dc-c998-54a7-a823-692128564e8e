@@ -14,6 +14,7 @@ const fieldsSvc = require('./fields');
 const mergeSvc = require('./merge-stats');
 const transfer = require('./transfer');
 const corrections = require('./corrections');
+const clustersSvc = require('./clusters');
 const { renderAnnotatedPng } = require('./render');
 const { buildReportCsv, buildCombinedCsv, buildComparisonCsv, buildFieldStatsCsv, streamZip } = require('./exporter');
 
@@ -636,6 +637,32 @@ app.get('/api/reports/:id/file', (req, res) => {
   const row = db.prepare('SELECT * FROM reports WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: '报告不存在' });
   res.sendFile(path.join(SNAP_DIR, row.snapshot_name));
+});
+
+// ---------- 报告细胞接触簇分析（只读；只使用发布时冻结数据） ----------
+//
+// 请求体：{ thresholdUm }（微米，可为 0）。按报告冻结的轮廓与定标计算
+// 细胞两两净区域间距、阈值内邻接对与连通簇；阈值仅影响本次查询，不写回报告，
+// 草稿后续修改或报告更正都不影响本接口对旧报告的分析结果。
+app.post('/api/reports/:id/contacts', (req, res) => {
+  const report = getReportOr404(req.params.id);
+  if (!report) return res.status(404).json({ error: '报告不存在' });
+  let thresholdUm;
+  try {
+    thresholdUm = clustersSvc.validateThreshold(req.body && req.body.thresholdUm);
+  } catch (e) {
+    return res.status(e.status || 400).json({ error: e.message });
+  }
+  const analysis = clustersSvc.buildContactAnalysis(
+    report.cells, report.calib.scale, thresholdUm);
+  res.json({
+    scope: 'report',
+    reportId: report.id,
+    title: report.title,
+    draftVersion: report.draftVersion,
+    scaleUmPerPx: report.calib.scale,
+    ...analysis
+  });
 });
 
 app.get('/api/reports/:id/png', async (req, res) => {

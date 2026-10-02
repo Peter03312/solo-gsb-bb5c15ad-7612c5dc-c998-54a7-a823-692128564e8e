@@ -321,5 +321,7 @@ module.exports = {
   ringStrictlyInside,
   pointStrictlyInside,
   pointInsideOrOn,
+  pointOnSegment,
+  segmentsTouch,
   netCentroid
 };

@@ -231,6 +231,19 @@ class CanvasView {
       }));
     });
 
+    // 接触簇高亮（报告详情页选中簇后由外部提供 highlightCellIds）
+    const hl = st.highlightCellIds;
+    if (hl && hl.size) {
+      cells.forEach((cell, i) => {
+        const key = (cell && typeof cell.id === 'string' && cell.id) ? cell.id : `#${i}`;
+        if (!hl.has(key)) return;
+        this.drawPolygon(ctx, cell.outer, { stroke: '#00e5ff', width: 5 / this.k, fill: null });
+        (cell.holes || []).forEach((h) => this.drawPolygon(ctx, h, {
+          stroke: '#00e5ff', width: 3 / this.k, fill: null
+        }));
+      });
+    }
+
     // 正在绘制的环
     if (st.drawing) {
       const isHole = st.drawing.kind === 'hole' || st.drawing.kind === 'fieldhole';

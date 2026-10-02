@@ -251,6 +251,20 @@
           <div id="rp-merge-result" class="merge-result"></div>
         </div>
         <div class="panel">
+          <h3>接触簇分析（间距阈值）</h3>
+          <p class="hint">输入<b>间距阈值（微米，允许 0）</b>，按发布时<b>冻结的轮廓与定标</b>计算：
+            距离取两个细胞<b>外轮廓扣除孔洞后的净区域</b>最短间距——区域重叠或边界接触时为 0；
+            仅落在另一细胞<b>孔洞内</b>而未触及其净区域的细胞<b>不算接触</b>。
+            阈值仅影响本次查看，不写回报告。</p>
+          <div class="toolbar wrap">
+            <input type="number" id="rp-contact-threshold" class="contact-threshold"
+                   min="0" step="any" value="0" placeholder="阈值 μm" />
+            <button id="rp-contact-run" class="primary small">分析接触簇</button>
+            <button id="rp-contact-clear" class="small hidden">清除高亮</button>
+          </div>
+          <div id="rp-contact-result"></div>
+        </div>
+        <div class="panel">
           <h3>导出</h3>
           <div class="toolbar wrap">
             <a id="rp-png-link" class="btn-like" download>标注 PNG</a>
