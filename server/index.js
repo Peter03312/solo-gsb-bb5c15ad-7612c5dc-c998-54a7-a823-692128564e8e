@@ -14,6 +14,7 @@ const fieldsSvc = require('./fields');
 const mergeSvc = require('./merge-stats');
 const transfer = require('./transfer');
 const corrections = require('./corrections');
+const contactsSvc = require('./contacts');
 const { renderAnnotatedPng } = require('./render');
 const { buildReportCsv, buildCombinedCsv, buildComparisonCsv, buildFieldStatsCsv, streamZip } = require('./exporter');
 
@@ -631,6 +632,96 @@ app.post('/api/reports/:id/field-merge', (req, res) => {
     stats
   });
 });
+
+// ---------- 细胞空间接触簇（只读；只取报告冻结的轮廓与定标） ----------
+//
+// 请求体：{ thresholdUm: number }（微米，允许 0）。阈值仅作用于本次查询，不写回报告：
+// 结果恒由该报告发布时冻结的 cells/calib 计算，草稿后续修改或报告更正都不影响旧报告。
+// 返回每个细胞阈值内的邻居与最短净区域间距、由邻接关系形成的连通簇；无邻接时每个细胞各自独立成簇。
+// 报告不存在 → 404；阈值为负/非有限数/缺失、未定标报告 → 400。
+function resolveContactReport(req, res) {
+  const report = getReportOr404(req.params.id);
+  if (!report) {
+    res.status(404).json({ error: '报告不存在' });
+    return null;
+  }
+  const body = req.body || {};
+  let threshold;
+  try {
+    threshold = contactsSvc.parseThreshold(body.thresholdUm);
+  } catch (e) {
+    badRequest(res, e.message);
+    return null;
+  }
+  return { report, threshold };
+}
+
+app.post('/api/reports/:id/contacts', (req, res) => {
+  const ctx = resolveContactReport(req, res);
+  if (!ctx) return;
+  const { report, threshold } = ctx;
+  if (!report.calib || typeof report.calib.scale !== 'number') {
+    return badRequest(res, '该报告发布时未完成标尺定标，无法按微米间距计算接触簇');
+  }
+  const result = contactsSvc.buildContactClusters(
+    report.cells, report.calib.scale, threshold);
+  res.json({
+    scope: 'report',
+    reportId: report.id,
+    title: report.title,
+    draftVersion: report.draftVersion,
+    calibrated: !!report.calib,
+    result
+  });
+});
+
+// 高亮所选接触簇的报告快照 PNG（GET 方便 <img>/下载直接引用）；
+// handler 在两个别名路径上共用
+async function contactsHighlightHandler(req, res) {
+  const report = getReportOr404(req.params.id);
+  if (!report) return res.status(404).json({ error: '报告不存在' });
+  let threshold;
+  try {
+    threshold = contactsSvc.parseThreshold(Number(req.query.threshold));
+  } catch (e) {
+    return badRequest(res, e.message);
+  }
+  const clusterId = String(req.query.cluster || '');
+  if (!clusterId) return badRequest(res, '请指定要高亮的接触簇 cluster（查询参数 cluster=c1、c2…）');
+  if (!report.calib || typeof report.calib.scale !== 'number') {
+    return badRequest(res, '该报告发布时未完成标尺定标，无法按微米间距计算接触簇');
+  }
+
+  const result = contactsSvc.buildContactClusters(
+    report.cells, report.calib.scale, threshold);
+  const cluster = result.clusters.find((c) => c.id === clusterId);
+  if (!cluster) {
+    return badRequest(res,
+      `接触簇 ${clusterId} 不存在：当前间距阈值 ${threshold} μm 下共有 ${result.clusters.length} 个簇（c1…c${result.clusters.length}），请重新查询后再选择`);
+  }
+
+  // 簇内邻接的最近净区域点对（黄色虚线）；接触/重叠对距离为 0，不画线
+  const contactLinks = cluster.adjacencies
+    .filter((p) => !p.contact && p.nearestPointPx)
+    .map((p) => p.nearestPointPx);
+
+  try {
+    const row = db.prepare('SELECT snapshot_name FROM reports WHERE id = ?').get(report.id);
+    const buf = await renderAnnotatedPng(
+      path.join(SNAP_DIR, row.snapshot_name),
+      { width: report.width, height: report.height, calib: report.calib, cells: report.cells },
+      { highlightKeys: cluster.cellKeys, contactLinks }
+    );
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Content-Disposition', `inline; filename="${report.id}_cluster_${clusterId}_t${threshold}.png"`);
+    res.send(buf);
+  } catch (e) {
+    res.status(500).json({ error: `高亮图片生成失败：${e.message}` });
+  }
+}
+
+app.get('/api/reports/:id/contacts/highlight.png', contactsHighlightHandler);
+app.get('/api/reports/:id/contacts/highlight', contactsHighlightHandler);
 
 app.get('/api/reports/:id/file', (req, res) => {
   const row = db.prepare('SELECT * FROM reports WHERE id = ?').get(req.params.id);

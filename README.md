@@ -8,7 +8,10 @@
 可发布为不可变报告、导出**标注 PNG**、**测量 CSV** 与**视野统计 CSV**；
 并支持把一份已发布报告的全部细胞经**三点对应仿射变换**整体迁移到另一张切片草稿；
 对已发布报告还可基于**同一切片的当前草稿**发起**更正**：生成新的不可变报告与图片快照、
-记录更正原因并串成**更正链**，列表展示每条链的当前有效报告、原因与历史，历史报告按原标识永久可查。
+记录更正原因并串成**更正链**，列表展示每条链的当前有效报告、原因与历史，历史报告按原标识永久可查；
+在报告详情输入**间距阈值（微米，允许 0）**，还可查看细胞在空间上形成的**接触簇**：
+每个细胞阈值内的邻居与**最短净区域间距**、由邻接关系形成的**连通簇**，并在报告快照上高亮所选簇
+（距离按扣除孔洞后的净区域计算，只落在孔洞内不视为接触；阈值仅作用于本次查询，不写回报告）。
 
 - 技术栈：Node.js（Express）+ SQLite（better-sqlite3）+ 原生 Canvas 前端
 - 图片与数据**全部本地保存**（无任何外部服务依赖）：
@@ -110,12 +113,22 @@
       **最近更正原因**与**历史版本**（可展开，历史报告按原标识打开）；普通发布各自成链；
     - **历史报告永不改变，仍可按原标识读取、导出（PNG/CSV/ZIP）**；既有的报告读取、
       导出、以及已保存的**报告比较**记录对旧标识继续使用原冻结内容；**普通发布行为完全不变**。
+13. **细胞空间接触簇（已发布报告 · 净区域间距 · 只读）**：在**报告详情**输入
+    **间距阈值（微米，允许 0）**，查看阈值内每个细胞的**邻居与最短净区域间距**、
+    由邻接关系形成的**连通簇**，点击簇即在**发布快照**上**高亮**（选中簇粗青描边、
+    簇内非接触邻接以黄虚线标出最近点对，其余细胞暗化；也可直接下载高亮 PNG）。
+    - 距离按两个细胞**外轮廓扣除孔洞后的净区域**计算：**区域重叠或边界接触 → 0**；
+      细胞**仅落在另一细胞孔洞内、未触及对方净区域时不算接触**，其距离为到孔洞边界的正距离；
+    - 阈值**含等于**（间距 ≤ 阈值相邻），邻接为无向关系，连通关系可传递（A–B、B–C 近而 A–C 远时三者同簇）；
+    - **没有任何邻接关系时，每个细胞各自返回一个独立簇**；
+    - 结果只取**所选报告冻结的轮廓与定标**：后续草稿修改或报告更正**都不改变旧报告**的分析，
+      历史报告按原标识查到的是其发布当时的接触簇；**阈值仅影响本次查询，不写库、不写回报告**；
+    - **报告不存在 → 404；阈值为负、非有限数（NaN/Infinity/非数字）或缺失 → 400**。
 
 ## 配置项
 
-本轮（报告更正链）**未引入新的环境变量或外部依赖**；仅对 `reports` 表幂等补两列
-（`corrects_report_id`、`correction_reason`，旧报告两列为 `NULL`、自动视为各自链末端），
-**旧数据库启动时自动迁移、无需手工变更**。沿用既有配置：
+本轮（细胞空间接触簇）**未引入新的环境变量或外部依赖，也没有任何数据库结构变更**：
+接触簇只读取 `reports` 表中发布时冻结的 `calib`/`cells`，查询结果不写库。沿用既有配置：
 
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -201,6 +214,14 @@ npm start
     - 预览全部通过后点 **确认迁移**（携带预览时读取的草稿版本；若期间草稿被改动，
       会提示版本过期并自动刷新，需重新预览）；成功后映射细胞追加到细胞列表末尾，
       测量表与视野统计立即按当前标尺重算，可照常继续编辑、保存或发布。
+13. 需要查看细胞在空间上形成的**接触簇**时，打开任一份**已发布报告**（历史报告同样可用），
+    在「**细胞空间接触簇**」面板输入**间距阈值（μm，允许 0）**并查询：
+    - 面板按簇列出成员细胞与簇内**邻接对的最短净区域间距**（区域重叠/边界接触标为 **0**；
+      只在对方孔洞内、未触及净区域的细胞不会被判为接触）；
+    - **点击任一簇**即在右侧发布快照上**高亮**该簇（青色粗描边 + 黄虚线标出最近点对，
+      其余细胞暗化）；再次点击取消高亮；独立细胞各自显示为独立簇；
+    - 改变阈值会重新计算，但**阈值不写回报告**；之后修改草稿或发起更正，
+      该报告按原标识查到的接触簇仍是**发布时冻结轮廓与定标**的结果。
 
 ## 目录结构
 
@@ -217,6 +238,7 @@ npm start
 │   ├── merge-stats.js # 多视野几何并集（平面排列精确面积）+ 严格并集内部判定 + 合并统计（服务端/页端共用 UMD）
 │   ├── compare.js     # 报告比较：手动一对一配对校验、冻结值差值/变化率视图
 │   ├── corrections.js # 报告更正链：原因校验、链构建/追溯摘要、发布校验与乐观冲突判定
+│   ├── contacts.js    # 细胞接触簇：净区域（外环扣孔洞）最短间距、阈值邻接与并查集连通簇
 │   ├── transfer.js    # 细胞迁移：三点对应点校验、仿射求解、整批映射+逐细胞校验
 │   ├── render.js      # sharp + SVG 渲染标注 PNG
 │   └── exporter.js    # CSV（测量/汇总/视野统计/比较）与 ZIP 导出
@@ -227,7 +249,9 @@ npm start
 ├── test-compare.js    # 报告比较自测（npm test）
 ├── test-transfer.js   # 细胞迁移自测（npm test）
 ├── test-corrections.js # 报告更正链纯逻辑自测（npm test）
+├── test-contacts.js    # 细胞接触簇净区域距离/阈值邻接/连通簇纯逻辑自测（npm test）
 ├── test-correct-api.js # 报告更正链端到端 HTTP 自测（npm test，临时目录起服务）
+├── test-contact-api.js # 细胞接触簇端到端 HTTP 自测（npm test，临时目录起服务）
 └── data/              # 运行后生成：app.db、images/、snapshots/
 ```
 
@@ -672,6 +696,148 @@ console.log(`已生成 ${r2.report.id}，更正自 ${r2.report.correctsReportId}
 // 继续更正：对新的链末端 r2.report.id 再发（携带其草稿版本与 r2 作为 expectedTipId）
 ```
 
+## 细胞空间接触簇 HTTP 接口（已发布报告 · 净区域间距 · 只读）
+
+对一份**已发布报告**（含更正链上的历史报告，按原标识即可），输入**间距阈值（μm，允许 0）**，
+返回阈值内每个细胞的**邻居及最短净区域间距**、由邻接关系形成的**连通簇**；
+结果只取该报告**发布时冻结的轮廓与定标**，草稿后续修改或报告更正都不改变旧报告；
+**阈值仅作用于本次查询，不写库、不写回报告**。
+
+距离定义（两个细胞**外轮廓扣除孔洞后的净区域**）：
+
+- 两净区域有任何交集（**面积重叠 / 外边界接触 / 一方完全落入另一方净区域**）→ 间距 **0**；
+- 细胞**仅落在另一细胞孔洞内、未触及对方净区域** → **不算接触**，间距为到孔洞边界的正距离
+  （孔洞边界本身仍是净区域边界，贴到孔洞边界即间距 0）；
+- 其余相离情形 → 两细胞全部环边（外环 + 孔洞边）之间的**最短欧氏距离**，按冻结定标换算为 μm。
+
+| 方法与路径 | 说明 |
+| --- | --- |
+| `POST /api/reports/:id/contacts` | 请求体 `{ "thresholdUm": number }`（μm，允许 0，含等于）→ 邻接关系与连通簇 |
+| `GET /api/reports/:id/contacts/highlight.png?threshold=<μm>&cluster=c<N>` | 在**发布快照**上高亮所选簇的 PNG（同路径不带 `.png` 别名亦可） |
+
+错误语义：
+
+- 报告不存在 → **404** `{error}`；
+- `thresholdUm` 为**负数、NaN/Infinity、非数字类型或缺失** → **400**（高亮接口的 `threshold` 查询参数同理）；
+- 高亮接口缺少 `cluster`，或该簇在当前阈值下不存在（如换了阈值后簇 id 已变化）→ **400**，
+  错误信息给出当前阈值下实际的簇数，应先重新调用 `/contacts` 再选择。
+
+成功响应示例（阈值 3 μm；A 带孔、B 严格落在 A 孔洞内距孔壁 2 px）：
+
+```json
+{
+  "scope": "report",
+  "reportId": "f4bc…", "title": "接触簇测试", "draftVersion": 3, "calibrated": true,
+  "result": {
+    "kind": "contact-clusters",
+    "thresholdUm": 3,
+    "calibrated": true,
+    "scaleUmPerPx": 1,
+    "cellCount": 4,
+    "adjacencyCount": 1,
+    "clusterCount": 3,
+    "multiCellClusterCount": 1,
+    "cells": [
+      { "key": "cellA", "name": "A", "seq": 1, "clusterId": "c1", "neighborCount": 1,
+        "neighbors": [
+          { "key": "cellB", "name": "B", "seq": 2, "distancePx": 2, "distanceUm": 2, "contact": false }
+        ] },
+      { "key": "cellB", "name": "B", "seq": 2, "clusterId": "c1", "neighborCount": 1, "neighbors": [] },
+      { "key": "cellC", "name": "C", "seq": 3, "clusterId": "c2", "neighborCount": 0, "neighbors": [] },
+      { "key": "cellD", "name": "D", "seq": 4, "clusterId": "c3", "neighborCount": 0, "neighbors": [] }
+    ],
+    "adjacencies": [
+      { "a": { "key": "cellA", "name": "A", "seq": 1 },
+        "b": { "key": "cellB", "name": "B", "seq": 2 },
+        "distancePx": 2, "distanceUm": 2, "contact": false,
+        "nearestPointPx": { "from": { "x": 22, "y": 20 }, "to": { "x": 22, "y": 22 } } }
+    ],
+    "clusters": [
+      { "id": "c1", "size": 2, "cellKeys": ["cellA", "cellB"],
+        "cells": [ { "key": "cellA", "name": "A", "seq": 1 }, { "key": "cellB", "name": "B", "seq": 2 } ],
+        "adjacencies": [ "…仅包含本簇内的邻接对，结构同顶层 adjacencies…" ] },
+      { "id": "c2", "size": 1, "cellKeys": ["cellC"],
+        "cells": [ { "key": "cellC", "name": "C", "seq": 3 } ], "adjacencies": [] },
+      { "id": "c3", "size": 1, "cellKeys": ["cellD"],
+        "cells": [ { "key": "cellD", "name": "D", "seq": 4 } ], "adjacencies": [] }
+    ]
+  }
+}
+```
+
+字段约定：
+
+- `cells[]`：每个冻结细胞一项，`key` 为细胞 id（历史无 id 时为 `#序号`），`seq` 为发布顺序（从 1 起），
+  `clusterId` 为本次查询中所属簇；`neighbors[]` 仅含**阈值内**邻居，按 `distanceUm` 升序；
+- `adjacencies[]`：全部阈值内无向邻接对（按间距升序），`contact=true` 表示净区域重叠/边界接触
+  （间距 0，`nearestPointPx` 为 `null`）；否则 `nearestPointPx` 给出像素坐标下的最近点对
+  （`from`/`to`，供在快照上绘制间距连线）；
+- `clusters[]`：邻接图的**连通分量**，按成员最小细胞序号稳定编号 `c1、c2…`；
+  每个簇含成员与**仅属于本簇**的邻接对；**没有邻接关系时每个细胞各成一个 size=1 的独立簇**，
+  空报告（无细胞）返回 0 个簇；
+- 邻接判定含等于（间距 ≤ 阈值），连通关系可传递（A–B、B–C 在阈值内而 A–C 较远时三者同簇）。
+
+curl 示例（`RID` 为报告 id）：
+
+```bash
+# 查询阈值 3 μm 的接触簇（0 合法：只统计区域重叠/边界接触）
+curl -s -X POST http://localhost:8080/api/reports/$RID/contacts \
+  -H 'Content-Type: application/json' -d '{"thresholdUm":3}' | jq '.result |
+    {thresholdUm, adjacencyCount, clusterCount, multiCellClusterCount,
+     clusters: [.clusters[] | {id, size, cellKeys}],
+     adjacencies: [.adjacencies[] | {a:.a.name, b:.b.name, distanceUm, contact}]}'
+
+# 阈值为负 / 非有限数 / 缺失 → 400
+curl -s -X POST http://localhost:8080/api/reports/$RID/contacts \
+  -H 'Content-Type: application/json' -d '{"thresholdUm":-1}'
+# -> { "error": "间距阈值无效：不能为负数（当前 -1 μm）；允许 0（仅统计边界接触/区域重叠）" }
+
+# 报告不存在 → 404
+curl -s -X POST http://localhost:8080/api/reports/no-such/contacts \
+  -H 'Content-Type: application/json' -d '{"thresholdUm":0}'
+# -> { "error": "报告不存在" }
+
+# 在发布快照上高亮 c1（簇内非接触邻接自动画黄色虚线连接最近点对）
+curl -s -o cluster_c1.png \
+  "http://localhost:8080/api/reports/$RID/contacts/highlight.png?threshold=3&cluster=c1"
+# 换了阈值后旧簇 id 可能失效 → 400（提示当前簇数），应先重新查询
+curl -s "http://localhost:8080/api/reports/$RID/contacts/highlight.png?threshold=0&cluster=c5"
+# -> { "error": "接触簇 c5 不存在：当前间距阈值 0 μm 下共有 4 个簇（c1…c4），请重新查询后再选择" }
+```
+
+Node.js 示例（无第三方依赖；阈值只作用于本次调用，重复查询幂等、不改变报告）：
+
+```js
+const base = 'http://localhost:8080';
+
+async function contactClusters(reportId, thresholdUm) {
+  const res = await fetch(`${base}/api/reports/${reportId}/contacts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ thresholdUm }) // μm，允许 0；负数/NaN/Infinity 会被 400 拒绝
+  });
+  const body = await res.json().catch(() => ({}));
+  if (res.status === 404) throw new Error(`报告 ${reportId} 不存在`);
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`); // 400：阈值非法
+  return body.result;
+}
+
+const r = await contactClusters(process.env.RID, 3);
+console.log(`阈值 ${r.thresholdUm} μm：${r.adjacencyCount} 对邻接，${r.clusterCount} 个连通簇`);
+for (const c of r.clusters) {
+  console.log(`簇 ${c.id}（${c.size} 个细胞）：${c.cells.map((x) => x.name).join('、')}`);
+  for (const a of c.adjacencies) {
+    console.log(`  ${a.a.name} ↔ ${a.b.name}: ${a.contact ? '接触/重叠（0）' : a.distanceUm + ' μm'}`);
+  }
+}
+
+// 高亮某簇的快照 PNG：GET URL 可直接放入 <img src>，或作为下载链接
+const firstMulti = r.clusters.find((c) => c.size > 1);
+const url = `${base}/api/reports/${process.env.RID}/contacts/highlight.png` +
+  `?threshold=${r.thresholdUm}&cluster=${firstMulti.id}`;
+console.log('高亮图片：', url);
+```
+
 ## 报告比较 HTTP 接口
 
 | 方法与路径 | 说明 |
@@ -701,6 +867,8 @@ console.log(`已生成 ${r2.report.id}，更正自 ${r2.report.correctsReportId}
 | **`GET /api/reports/:id/trace`** | **追溯某份报告所在更正链（根、末端、位置、由旧到新 members）** |
 | **`POST /api/reports/:id/correct`** | **发起更正：`{reason, draftVersion, expectedTipId, title?}`；过期 409 返回最新信息；失败不留报告/快照** |
 | **`POST /api/reports/:id/field-merge`** | **报告内多视野合并统计（只读，只取发布时冻结数据；不足两个/重复/不存在 400）** |
+| **`POST /api/reports/:id/contacts`** | **细胞空间接触簇：`{thresholdUm}`（μm，允许 0）；只取冻结轮廓/定标，阈值不写回；阈值负/非有限数 400、报告不存在 404；无邻接返回各细胞独立簇** |
+| **`GET /api/reports/:id/contacts/highlight.png`** | **在发布快照上高亮所选簇（查询参数 `threshold`、`cluster=c1…`）；黄虚线标出簇内最近点对** |
 | `GET /api/reports/:id/file` / `/png` | 发布时图片快照 / 标注 PNG |
 | `GET /api/reports/:id/csv` | 测量 CSV（μm²，原义不变） |
 | **`GET /api/reports/:id/field-csv`** | **视野统计 CSV（mm²，与报告页同一冻结结果）** |

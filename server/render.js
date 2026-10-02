@@ -27,28 +27,50 @@ function polyPoints(poly) {
 }
 
 // 生成标注叠加 SVG（标注内容来自已校验的快照/草稿数据）
-function buildSvg({ width, height, calib, cells }) {
+// options.highlightKeys：仅高亮这些细胞 id/序号兜底键（粗青描边 + 半透明青填充，其余细胞弱化）
+// options.contactLinks：阈值内邻接连线（黄虚线连接最近点对）
+function buildSvg({ width, height, calib, cells }, options = {}) {
   const sw = Math.max(2, Math.round(width / 450));
+  const highlightSet = new Set(Array.isArray(options.highlightKeys) ? options.highlightKeys : []);
+  const hasHighlight = highlightSet.size > 0;
   const parts = [];
   parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`);
   parts.push(`<rect x="0" y="0" width="${width}" height="${height}" fill="transparent"/>`);
 
+  // 邻接连线（最近净区域点对）：画在细胞之下
+  (options.contactLinks || []).forEach((lnk) => {
+    if (!lnk.from || !lnk.to) return;
+    parts.push(`<line x1="${lnk.from.x.toFixed(2)}" y1="${lnk.from.y.toFixed(2)}" ` +
+      `x2="${lnk.to.x.toFixed(2)}" y2="${lnk.to.y.toFixed(2)}" ` +
+      `stroke="#ffd400" stroke-width="${Math.max(2.5, sw * 1.1)}" stroke-dasharray="${sw * 3},${sw * 1.6}" stroke-linecap="round"/>`);
+  });
+
   cells.forEach((cell, i) => {
+    const key = typeof cell.id === 'string' && cell.id ? cell.id : `${i}`;
+    const hl = hasHighlight && highlightSet.has(key);
     const color = PALETTE[i % PALETTE.length];
-    parts.push(`<polygon points="${polyPoints(cell.outer)}" fill="${color}" fill-opacity="0.14" stroke="${color}" stroke-width="${sw}" stroke-linejoin="round"/>`);
+    if (hasHighlight && !hl) {
+      // 未选中的细胞与孔洞：暗化处理，让选中簇一眼可辨
+      parts.push(`<polygon points="${polyPoints(cell.outer)}" fill="#8d99a8" fill-opacity="0.10" stroke="#8d99a8" stroke-width="${Math.max(1, sw * 0.8)}" stroke-linejoin="round"/>`);
+    } else if (hl) {
+      parts.push(`<polygon points="${polyPoints(cell.outer)}" fill="#00e5ff" fill-opacity="0.22" stroke="#00e5ff" stroke-width="${sw * 1.7}" stroke-linejoin="round"/>`);
+    } else {
+      parts.push(`<polygon points="${polyPoints(cell.outer)}" fill="${color}" fill-opacity="0.14" stroke="${color}" stroke-width="${sw}" stroke-linejoin="round"/>`);
+    }
     (cell.holes || []).forEach((h) => {
-      parts.push(`<polygon points="${polyPoints(h)}" fill="none" stroke="#ff1744" stroke-width="${Math.max(1.5, sw * 0.7)}" stroke-dasharray="${sw * 2.4},${sw * 1.4}" stroke-linejoin="round"/>`);
+      const holeStroke = hl ? '#00e5ff' : '#ff1744';
+      parts.push(`<polygon points="${polyPoints(h)}" fill="${hl ? 'none' : 'rgba(0,0,0,0.28)'}" stroke="${holeStroke}" stroke-width="${Math.max(1.5, sw * 0.7)}" stroke-dasharray="${sw * 2.4},${sw * 1.4}" stroke-linejoin="round"/>`);
     });
     const c = centroid(cell.outer);
     const r = Math.max(9, sw * 3.4);
-    parts.push(`<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="${r}" fill="${color}" stroke="#ffffff" stroke-width="${Math.max(1, sw * 0.5)}"/>`);
+    parts.push(`<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="${r}" fill="${hl ? '#00e5ff' : color}" stroke="#ffffff" stroke-width="${Math.max(1, sw * 0.5)}"/>`);
     parts.push(`<text x="${c.x.toFixed(1)}" y="${(c.y + r * 0.36).toFixed(1)}" text-anchor="middle" font-family="${FONT}" font-size="${(r * 1.15).toFixed(1)}" font-weight="bold" fill="#ffffff">${i + 1}</text>`);
     const name = cell.name ? String(cell.name) : `${i + 1}`;
     if (name !== `${i + 1}`) {
       const fs = Math.max(11, sw * 3.2);
       const tx = c.x + r + sw;
       const ty = c.y + r - fs * 0.15;
-      parts.push(`<text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="start" font-family="${FONT}" font-size="${fs}" font-weight="bold" fill="${color}" stroke="#000000" stroke-width="${Math.max(2, sw * 0.6)}" paint-order="stroke">${xmlEscape(name)}</text>`);
+      parts.push(`<text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="start" font-family="${FONT}" font-size="${fs}" font-weight="bold" fill="${hl ? '#00e5ff' : color}" stroke="#000000" stroke-width="${Math.max(1, sw * 0.6)}" paint-order="stroke">${xmlEscape(name)}</text>`);
     }
   });
 
@@ -56,12 +78,12 @@ function buildSvg({ width, height, calib, cells }) {
     const { p1, p2, distanceUm } = calib;
     parts.push(`<line x1="${p1.x}" y1="${p1.y}" x2="${p2.x}" y2="${p2.y}" stroke="#00e5ff" stroke-width="${Math.max(2, sw)}" stroke-linecap="round"/>`);
     [p1, p2].forEach((p) => {
-      parts.push(`<circle cx="${p.x}" cy="${p.y}" r="${Math.max(4, sw * 1.8)}" fill="#00e5ff" stroke="#003a44" stroke-width="1"/>`);
+      parts.push(`<circle cx="${p.x}" cy="${p.y}" r="${Math.max(sw * 1.8)}" fill="#00e5ff" stroke="#003a44" stroke-width="1"/>`);
     });
     const mx = (p1.x + p2.x) / 2;
     const my = (p1.y + p2.y) / 2;
     const label = `${Number(distanceUm).toString()} μm`;
-    const fs = Math.max(13, sw * 5);
+    const fs = Math.max(11, sw * 5);
     const labelDy = my < fs * 2 ? fs * 2.2 : -(fs * 1.1);
     parts.push(`<text x="${mx.toFixed(1)}" y="${(my + labelDy).toFixed(1)}" text-anchor="middle" font-family="${FONT}" font-size="${fs}" font-weight="bold" fill="#00e5ff" stroke="#003a44" stroke-width="${Math.max(2, sw * 0.6)}" paint-order="stroke">${xmlEscape(label)}</text>`);
   }
@@ -70,8 +92,8 @@ function buildSvg({ width, height, calib, cells }) {
   return parts.join('');
 }
 
-async function renderAnnotatedPng(imagePath, data) {
-  const svg = buildSvg(data);
+async function renderAnnotatedPng(imagePath, data, options) {
+  const svg = buildSvg(data, options);
   return sharp(imagePath)
     .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])
     .png()

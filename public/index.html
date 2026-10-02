@@ -251,6 +251,20 @@
           <div id="rp-merge-result" class="merge-result"></div>
         </div>
         <div class="panel">
+          <h3>细胞空间接触簇（净区域间距）</h3>
+          <p class="hint">输入<b>间距阈值（μm，允许 0）</b>，按报告<b>冻结的外轮廓扣除孔洞后的净区域</b>
+            计算：区域重叠或边界接触间距为 0；细胞只落在另一细胞孔洞内且未触及净区域时<b>不算接触</b>。
+            阈值仅用于本次查询，<b>不写回报告</b>；草稿改动或报告更正不影响本报告结果。</p>
+          <div class="toolbar wrap">
+            <input type="number" id="rp-contact-threshold" min="0" step="any" value="0"
+                   style="width:7em" placeholder="μm" />
+            <button id="rp-contact-query" class="primary small">查询接触簇</button>
+          </div>
+          <div id="rp-contact-msg"></div>
+          <div id="rp-contact-summary" class="merge-result"></div>
+          <div id="rp-contact-clusters" class="cluster-list"></div>
+        </div>
+        <div class="panel">
           <h3>导出</h3>
           <div class="toolbar wrap">
             <a id="rp-png-link" class="btn-like" download>标注 PNG</a>

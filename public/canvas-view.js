@@ -219,15 +219,45 @@ class CanvasView {
     const fields = st.fields || [];
     fields.forEach((field, i) => this.drawField(ctx, field, i, fields.length, st.activeFieldId));
 
-    cells.forEach((cell, i) => this.drawPolygon(ctx, cell.outer, {
-      fill: CELL_COLORS[i % CELL_COLORS.length],
-      width: 2.5 / this.k,
-      active: cell.id === st.activeCellId
-    }));
-    // 孔洞（已保存）
-    cells.forEach((cell) => {
+    // 细胞接触簇高亮：选中簇内细胞粗青描边，其余暗化；邻接最近点对画黄虚线
+    const highlight = st.contactHighlight || null;
+    const hlSet = highlight && Array.isArray(highlight.cellKeys) ? new Set(highlight.cellKeys) : null;
+    if (hlSet && (highlight.links || []).length) {
+      for (const lnk of highlight.links) {
+        if (!lnk || !lnk.from || !lnk.to) continue;
+        ctx.beginPath();
+        ctx.moveTo(lnk.from.x, lnk.from.y);
+        ctx.lineTo(lnk.to.x, lnk.to.y);
+        ctx.strokeStyle = '#ffd400';
+        ctx.lineWidth = 2.2 / this.k;
+        ctx.setLineDash([8 / this.k, 5 / this.k]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+
+    cells.forEach((cell, i) => {
+      const key = typeof cell.id === 'string' && cell.id ? cell.id : `#${i}`;
+      const hl = hlSet ? hlSet.has(key) : false;
+      if (hlSet && !hl) {
+        this.drawPolygon(ctx, cell.outer, {
+          fill: '#8d99a8', stroke: '#8d99a8', width: 1.6 / this.k
+        });
+      } else {
+        this.drawPolygon(ctx, cell.outer, {
+          fill: hl ? '#00e5ff' : CELL_COLORS[i % CELL_COLORS.length],
+          width: (hl ? 4 : 2.5) / this.k,
+          active: cell.id === st.activeCellId
+        });
+      }
+    });
+    // 孔洞（已保存；高亮时选中簇孔洞描青色）
+    cells.forEach((cell, i) => {
+      const key = typeof cell.id === 'string' && cell.id ? cell.id : `#${i}`;
+      const hl = hlSet ? hlSet.has(key) : false;
+      if (hlSet && !hl) return; // 暗化细胞不再重复画红孔洞
       (cell.holes || []).forEach((h) => this.drawPolygon(ctx, h, {
-        stroke: '#ff1744', dash: [7 / this.k, 5 / this.k], width: 2 / this.k, fill: null
+        stroke: hl ? '#00e5ff' : '#ff1744', dash: [7 / this.k, 5 / this.k], width: 2 / this.k, fill: null
       }));
     });
 

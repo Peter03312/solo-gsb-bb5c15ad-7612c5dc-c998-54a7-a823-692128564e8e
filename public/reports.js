@@ -15,6 +15,12 @@ const Reports = {
   draft: null,        // 同一切片的当前草稿
   correcting: false,
 
+  // 细胞空间接触簇（只取报告冻结数据；阈值仅本次查询）
+  contactReport: null,  // 当前详情报告
+  contactResult: null,  // 最近一次查询结果
+  contactThreshold: 0,  // 最近一次阈值（μm）
+  contactClusterId: null, // 画布上高亮的簇 id
+
   async showList() {
     document.getElementById('view-reports').classList.remove('hidden');
     await this.refresh();
@@ -241,6 +247,12 @@ const Reports = {
     this.mergeSelected = [];
     this.renderReportMerge(r);
 
+    // 细胞空间接触簇：重置为未查询状态
+    this.contactReport = r;
+    this.contactResult = null;
+    this.contactClusterId = null;
+    this.renderContactPanel(r, null);
+
     document.getElementById('rp-png-link').href = API.exportPngUrl(r.id);
     document.getElementById('rp-png-link').setAttribute('download', `${r.id}_annotated.png`);
     document.getElementById('rp-csv-link').href = API.exportCsvUrl(r.id);
@@ -254,7 +266,11 @@ const Reports = {
       });
       this.detailView.readOnly = true;
     }
-    this.detailView.bindState(() => ({ cells: r.cells, fields: r.fields || [], calib: r.calib, activeCellId: null }));
+    this.detailView.bindState(() => ({
+      cells: r.cells, fields: r.fields || [], calib: r.calib, activeCellId: null,
+      // 高亮状态随查询/选簇动态读取：画布每次重绘都取最新选中簇
+      contactHighlight: this.currentContactHighlight()
+    }));
     await this.detailView.loadImage(`/api/reports/${r.id}/file`, r.width, r.height);
     this.detailView.readOnly = true;
     this.detailView.setTool('pan');
@@ -268,6 +284,17 @@ const Reports = {
     this.trace = null;
     this.draft = null;
     this.correcting = false;
+    this.contactReport = null;
+    this.contactResult = null;
+    this.contactClusterId = null;
+  },
+
+  bindContactUI() {
+    const btn = document.getElementById('rp-contact-query');
+    if (!btn) return;
+    btn.onclick = () => this.queryContacts();
+    const input = document.getElementById('rp-contact-threshold');
+    if (input) input.onkeydown = (e) => { if (e.key === 'Enter') this.queryContacts(); };
   },
 
   esc(s) {
@@ -498,6 +525,120 @@ const Reports = {
       </table>
       <p class="hint">同一细胞在并集中只计一次。计入细胞：${counted || '（无）'}。
       结果只读取<b>发布时冻结数据</b>（发布时草稿 v${r.draftVersion}），不随后续草稿变化。</p>`;
+  },
+
+  // ---------- 细胞空间接触簇（净区域间距；只取报告冻结数据） ----------
+
+  renderContactPanel(report, result) {
+    const msgEl = document.getElementById('rp-contact-msg');
+    const sumEl = document.getElementById('rp-contact-summary');
+    const listEl = document.getElementById('rp-contact-clusters');
+    if (!msgEl || !sumEl || !listEl) return;
+    msgEl.innerHTML = '';
+    if (!result) {
+      sumEl.innerHTML = '<p class="hint">输入间距阈值后查询：给出每个细胞阈值内的邻居、' +
+        '最短净区域间距与连通簇；点击簇可在快照上高亮。</p>';
+      listEl.innerHTML = '';
+      return;
+    }
+    sumEl.innerHTML = `
+      <table class="measure compact">
+        <tbody>
+          <tr><th>间距阈值</th><td>${result.thresholdUm} μm</td></tr>
+          <tr><th>细胞数</th><td>${result.cellCount}</td></tr>
+          <tr><th>阈值内邻接</th><td>${result.adjacencyCount} 对</td></tr>
+          <tr><th>连通簇</th><td>${result.clusterCount} 个（含 ≥2 细胞的 ${result.multiCellClusterCount} 个）</td></tr>
+        </tbody>
+      </table>
+      <p class="hint">结果只取<b>发布时冻结数据</b>（草稿 v${report.draftVersion}）；阈值仅本次查询，不写回报告。</p>`;
+
+    listEl.innerHTML = '';
+    result.clusters.forEach((cl) => {
+      const box = document.createElement('div');
+      const active = cl.id === this.contactClusterId;
+      box.className = 'cluster-item' + (active ? ' active' : '');
+      const isMulti = cl.size > 1;
+      const head = document.createElement('div');
+      head.className = 'cluster-head';
+      head.innerHTML =
+        `<span class="cluster-tag ${isMulti ? 'multi' : 'solo'}">${cl.id}</span>` +
+        `<span>${isMulti ? `${cl.size} 细胞接触簇` : '独立细胞（无阈值内邻居）'}</span>` +
+        `<span class="cluster-members">${cl.cells.map((c) => this.esc(c.name || c.seq)).join('、')}</span>`;
+      box.appendChild(head);
+      if (cl.adjacencies.length) {
+        const tbl = document.createElement('table');
+        tbl.className = 'measure compact cluster-adj';
+        tbl.innerHTML = '<thead><tr><th>邻接对</th><th>最短净区域间距</th></tr></thead>';
+        const tb = document.createElement('tbody');
+        cl.adjacencies.forEach((a) => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${this.esc(a.a.name || a.a.seq)} ↔ ${this.esc(a.b.name || a.b.seq)}</td>` +
+            `<td>${a.contact ? '<b>0（区域重叠/边界接触）</b>' : `${a.distanceUm} μm`}</td>`;
+          tb.appendChild(tr);
+        });
+        tbl.appendChild(tb);
+        box.appendChild(tbl);
+      }
+      head.style.cursor = 'pointer';
+      head.title = '在报告快照上高亮该簇';
+      head.onclick = () => this.selectContactCluster(cl.id);
+      listEl.appendChild(box);
+    });
+  },
+
+  contactMsg(msg, ok) {
+    const el = document.getElementById('rp-contact-msg');
+    if (!el) return;
+    el.className = ok ? 'correct-ok' : 'correct-error';
+    el.textContent = msg;
+  },
+
+  async queryContacts() {
+    const report = this.contactReport;
+    if (!report) return;
+    const raw = document.getElementById('rp-contact-threshold').value;
+    const threshold = Number(raw);
+    if (!Number.isFinite(threshold) || threshold < 0) {
+      this.contactMsg('请输入不小于 0 的有限数值间距（微米），允许 0', false);
+      return;
+    }
+    this.contactThreshold = threshold;
+    let body;
+    try {
+      body = await API.reportContacts(report.id, threshold);
+    } catch (e) {
+      this.contactMsg(e.message, false);
+      return;
+    }
+    this.contactResult = body.result;
+    // 原高亮簇 id 在新阈值下可能不存在：失效则取消高亮
+    if (this.contactClusterId &&
+        !this.contactResult.clusters.some((c) => c.id === this.contactClusterId)) {
+      this.contactClusterId = null;
+      if (this.detailView) this.detailView.render();
+    }
+    this.contactMsg(`已按阈值 ${threshold} μm 计算：${body.result.adjacencyCount} 对邻接、` +
+      `${body.result.clusterCount} 个连通簇`, true);
+    this.renderContactPanel(report, body.result);
+  },
+
+  selectContactCluster(clusterId) {
+    if (!this.contactResult) return;
+    // 再次点击已选簇：取消高亮
+    this.contactClusterId = this.contactClusterId === clusterId ? null : clusterId;
+    if (this.detailView) this.detailView.render();
+    this.renderContactPanel(this.contactReport, this.contactResult);
+  },
+
+  // 画布高亮所需数据：选中簇的细胞键 + 簇内非接触邻接的最近点像素对
+  currentContactHighlight() {
+    if (!this.contactResult || !this.contactClusterId) return null;
+    const cl = this.contactResult.clusters.find((c) => c.id === this.contactClusterId);
+    if (!cl) return null;
+    return {
+      cellKeys: cl.cellKeys,
+      links: cl.adjacencies.filter((a) => !a.contact && a.nearestPointPx).map((a) => a.nearestPointPx)
+    };
   },
 
   fmt(v) {

@@ -306,6 +306,30 @@ table.cmp-table td.num { text-align: right; }
 }
 .correct-ok { color: var(--accent); font-size: 12.5px; margin-top: 8px; }
 
+/* 细胞空间接触簇面板 */
+.cluster-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.cluster-item {
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 7px 9px; background: rgba(255,255,255,.015);
+}
+.cluster-item.active { border-color: #00e5ff; background: rgba(0,229,255,.08); }
+.cluster-head { display: flex; align-items: center; gap: 8px; font-size: 12.5px; flex-wrap: wrap; }
+.cluster-tag {
+  display: inline-block; min-width: 30px; text-align: center;
+  border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px;
+  font-weight: bold; color: var(--muted);
+}
+.cluster-tag.multi { color: #00e5ff; border-color: #00e5ff; }
+.cluster-tag.solo { color: var(--muted); }
+.cluster-members { color: var(--muted); }
+.cluster-adj { margin-top: 6px; }
+.cluster-adj th, .cluster-adj td { padding: 2px 8px 2px 0; }
+#rp-contact-threshold {
+  background: var(--panel2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; font: inherit;
+}
+#rp-contact-threshold:focus { outline: none; border-color: var(--accent); }
+
 /* 列表内更正链历史折叠块 */
 .chain-history {
   margin: -4px 0 6px 86px;

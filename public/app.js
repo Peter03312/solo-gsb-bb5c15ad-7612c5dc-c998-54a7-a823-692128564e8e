@@ -118,6 +118,7 @@ const App = {
 
   init() {
     Editor.bindUI();
+    Reports.bindContactUI();
 
     document.getElementById('cmp-load').onclick = () => Compare.loadPickedReports();
     document.getElementById('cmp-save').onclick = () => Compare.save();

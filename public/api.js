@@ -83,6 +83,18 @@ const API = {
       body: JSON.stringify({ fieldIds })
     }));
   },
+  // 细胞空间接触簇：只读取报告冻结的轮廓与定标；阈值 μm（允许 0）仅作用于本次查询
+  async reportContacts(reportId, thresholdUm) {
+    return jsonOrThrow(await fetch(`/api/reports/${reportId}/contacts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ thresholdUm })
+    }));
+  },
+  // 所选接触簇在报告快照上的高亮 PNG（只读 GET，便于 <img> 与直接下载）
+  reportContactHighlightUrl(reportId, thresholdUm, clusterId) {
+    return `/api/reports/${reportId}/contacts/highlight.png?threshold=${encodeURIComponent(thresholdUm)}&cluster=${encodeURIComponent(clusterId)}`;
+  },
   async listReports() {
     return jsonOrThrow(await fetch('/api/reports'));
   },
